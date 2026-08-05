@@ -1,0 +1,25 @@
+{
+  "logging": {
+    "level": "info"
+  },
+  "gateway": {
+    "port": 18789
+  },
+  "agents": {
+    "defaults": {
+      "model": "qwen3.6-max-preview"
+    }
+  },
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "accounts": {
+        "default": {
+          "appId": "${FEISHU_APP_ID}",
+          "appSecret": "${FEISHU_APP_SECRET}",
+          "connectionMode": "websocket"
+        }
+      }
+    }
+  }
+}

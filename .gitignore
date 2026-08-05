@@ -1,0 +1,60 @@
+# ---------- Secrets (NEVER commit) ----------
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+# /secrets/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg
+
+# ---------- Node / Frontend ----------
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- Runtime state ----------
+.watchlight-state/
+*.session.jsonl
+*.session.json
+
+# ---------- AI / Agent tool configs (NEVER commit) ----------
+.agents/
+.claude/
+.opencode/
+.copilot/
+.cursor/
+continue/
+.aider*
+.chatgpt*
+
+# ---------- Runtime user data ----------
+.uploads/
+.pytest-tmp/
+
+# ---------- IDE / OS ----------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+/ENGINEERING_GAPS.md
+

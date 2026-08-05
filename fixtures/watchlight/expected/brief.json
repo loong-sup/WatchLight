@@ -1,0 +1,5 @@
+{
+  "must_contain": "v2.0 released",
+  "sendable": true,
+  "source_url": "https://fixture.example/product"
+}

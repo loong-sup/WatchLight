@@ -1,0 +1,5 @@
+{"role":"system","content":"You are a helpful assistant.","ts":1712000000000}
+{"role":"user","content":"Hello, how are you?","ts":1712000001000}
+{"role":"assistant","content":"I'm doing well, thank you! How can I help you today?","ts":1712000002000,"usage":{"inputTokens":25,"outputTokens":15}}
+{"role":"user","content":"What is the weather like?","ts":1712000010000}
+{"role":"assistant","content":"I don't have access to real-time weather data, but I can help you find weather information if you tell me your location.","ts":1712000011000,"usage":{"inputTokens":40,"outputTokens":30}}

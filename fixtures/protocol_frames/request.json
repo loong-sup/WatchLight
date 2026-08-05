@@ -1,0 +1,1 @@
+{"type":"req","id":"conn-1","method":"connect","params":{"minProtocol":1,"maxProtocol":3,"client":{"id":"web-admin","version":"0.1.0","platform":"darwin","mode":"local"}}}

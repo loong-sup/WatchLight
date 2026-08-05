@@ -1,0 +1,1 @@
+{"type":"res","id":"bad-1","ok":false,"error":{"code":"INVALID_REQUEST","message":"Missing required field: method"}}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://watchlight.dev/config.schema.json",
+  "meta": {
+    "lastTouchedVersion": "2026.4.12-beta.1",
+    "lastTouchedAt": "2026-04-12T10:00:00Z"
+  },
+  "logging": {
+    "level": "info",
+    "consoleLevel": "info",
+    "consoleStyle": "pretty"
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "test-gateway-token-abc123"
+    },
+    "controlUi": {
+      "enabled": true
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "claude-sonnet-4-6",
+      "workspace": "~/.watchlight/agents/main"
+    },
+    "list": [
+      {
+        "id": "main"
+      }
+    ]
+  },
+  "session": {
+    "scope": "per-sender",
+    "typingMode": "thinking",
+    "typingIntervalSeconds": 3
+  },
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "accounts": {
+        "default": {
+          "appId": "cli_a955be04c5b95bb3",
+          "appSecret": "${FEISHU_APP_SECRET}",
+          "connectionMode": "websocket"
+        }
+      }
+    }
+  },
+  "plugins": {
+    "enabled": true
+  },
+  "memory": {
+    "backend": "builtin"
+  }
+}
