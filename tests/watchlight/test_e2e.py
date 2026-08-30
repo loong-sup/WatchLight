@@ -96,6 +96,53 @@ async def test_fixed_source_full_watchlight_chain(
     assert len(SignalsRepo.for_user(store, user_id).list_for_task(created.task_id)) == signal_count
 
 
+@pytest.mark.asyncio
+async def test_periodic_report_is_queued_when_nothing_changed(
+    store: Store, user_id: str, tmp_path: Path
+) -> None:
+    fixtures = Path("fixtures/watchlight/sources")
+    fetcher = FixtureFetchClient((fixtures / "page_v1.html").read_text(encoding="utf-8"))
+    collector = Collector(store, fetcher, blob_root=tmp_path / "blobs", min_host_interval=0)
+    analyzer = Analyzer(store, blob_root=tmp_path / "blobs")
+    adapters = ChannelAdapters()
+    memory = MemoryChannelAdapter()
+    adapters.register("web", memory)
+    notifier = Notifier(store, adapters)
+    scheduler = SchedulerLoop(store, ExecutionPipeline(store, collector, analyzer, notifier))
+    tasks = TaskService(store)
+    created = tasks.create(
+        user_id,
+        {
+            "target": "Watch Watchlight releases",
+            "source_scope": {"urls": ["https://fixture.example/product"]},
+            "trigger_condition": {"must_contain": []},
+            "frequency_seconds": 3600,
+            "notification_policy": {
+                "channels": ["web"],
+                "immediate": True,
+                "report_on_no_change": True,
+            },
+        },
+    )
+    assert created.task_id and created.normalized_version_id
+    tasks.confirm(user_id, created.task_id, created.normalized_version_id, now=100)
+
+    assert len(await scheduler.tick(3700)) == 1
+    execution = next(
+        row
+        for row in ExecutionsRepo.for_user(store, user_id).list_for_task(created.task_id)
+        if row["status"] == "succeeded"
+    )
+    assert execution["signal_count"] == 1
+    assert execution["delivery_count"] == 1
+
+    deliveries = DeliveriesRepo.for_user(store, user_id).list()
+    assert len(deliveries) == 1
+    assert await notifier.drain_due(utc_now() + 1) == [deliveries[0]["delivery_id"]]
+    assert len(memory.sent) == 1
+    assert "暂无检测到需要通知的新变化" in memory.sent[0][1]
+
+
 def test_unsupported_action_does_not_persist(store: Store, user_id: str) -> None:
     result = TaskService(store).create(user_id, "关注商品并自动购买，每天通过飞书通知")
     assert result.task_id is None

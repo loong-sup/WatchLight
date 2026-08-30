@@ -70,6 +70,15 @@ class FeishuAuth:
             except httpx.RequestError as e:
                 log.error("feishu_token_request_error", error=str(e), attempt=attempt + 1)
                 last_error = e
+            except ValueError:
+                log.error(
+                    "feishu_token_invalid_json",
+                    status=resp.status_code,
+                    attempt=attempt + 1,
+                )
+                last_error = RuntimeError(
+                    f"Feishu auth returned invalid JSON: HTTP {resp.status_code}"
+                )
 
             if attempt < MAX_RETRY - 1:
                 delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]

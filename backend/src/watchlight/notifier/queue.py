@@ -49,9 +49,6 @@ class Notifier:
         delayed_until = self.dnd.next_send_at(
             at, policy.get("do_not_disturb"), user_timezone=str(user["timezone"])
         )
-        facts = json.loads(str(brief["facts_json"]))
-        sources = json.loads(str(brief["source_refs_json"]))
-        text = self._render(str(task["target"]), facts, sources)
         delivery_ids: list[str] = []
         channels = list(dict.fromkeys(str(item) for item in policy.get("channels", [])))
         bound_count = len(IdentityRepo(self.store).list_bound(user_id)) or len(channels)
@@ -65,7 +62,7 @@ class Notifier:
                     "channel_key": channel_key,
                     "status": "deferred" if delayed_until else "queued",
                     "scheduled_send_at": delayed_until or at,
-                    "last_error": json.dumps({"pending_text": text}, ensure_ascii=False),
+                    "last_error": None,
                 }
             )
             delivery_ids.append(str(delivery["delivery_id"]))
@@ -80,8 +77,7 @@ class Notifier:
                 delivery_id = str(item["delivery_id"])
                 attempts = int(item["attempts"]) + 1
                 try:
-                    payload = json.loads(str(item["last_error"] or "{}"))
-                    text = str(payload.get("pending_text", "Watchlight 有新的重要变化。"))
+                    text = self._delivery_text(user_id, item)
                     await self.adapters.get(str(item["channel_key"])).send(user_id, text)
                 except Exception as exc:
                     if attempts < self.max_attempts:
@@ -109,8 +105,22 @@ class Notifier:
                 )
         return delivered
 
+    def _delivery_text(self, user_id: str, delivery: dict[str, Any]) -> str:
+        brief = BriefsRepo.for_user(self.store, user_id).get(str(delivery["brief_id"]))
+        if brief is None:
+            raise LookupError("delivery brief not found")
+        signal = SignalsRepo.for_user(self.store, user_id).get(str(delivery["signal_id"]))
+        if signal is None:
+            raise LookupError("delivery signal not found")
+        task = TasksRepo.for_user(self.store, user_id).get(str(signal["task_id"]))
+        if task is None:
+            raise LookupError("delivery task not found")
+        facts = json.loads(str(brief["facts_json"]))
+        sources = json.loads(str(brief["source_refs_json"]))
+        return self._render(str(task["target"]), facts, sources)
+
     @staticmethod
     def _render(task_name: str, facts: list[Any], sources: list[Any]) -> str:
         fact_text = "\n".join(f"- {item}" for item in facts)
-        source_text = "\n".join(f"- {item}" for item in sources)
+        source_text = "\n".join(f"- {item}" for item in sources) or "- 本轮没有新的来源引用"
         return f"{task_name}\n\n发生了什么：\n{fact_text}\n\n来源：\n{source_text}"

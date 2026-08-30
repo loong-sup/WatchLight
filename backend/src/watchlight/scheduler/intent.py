@@ -137,6 +137,7 @@ def deterministic_intent(
         patch["notification_policy"] = {
             "channels": ["feishu"],
             "immediate": True,
+            "report_on_no_change": "汇报" in message or "无变化也通知" in message,
         }
     elif "Web" in message or "网页" in message:
         patch["notification_policy"] = {"channels": ["web"], "immediate": True}
@@ -181,10 +182,15 @@ def sanitize_patch(raw: Any) -> dict[str, Any]:
             str(item) for item in policy["channels"] if str(item) in {"feishu", "web"}
         ]
         if channels:
-            patch["notification_policy"] = {
+            clean_policy = {
                 "channels": list(dict.fromkeys(channels)),
                 "immediate": bool(policy.get("immediate", True)),
             }
+            if "report_on_no_change" in policy:
+                clean_policy["report_on_no_change"] = bool(
+                    policy.get("report_on_no_change")
+                )
+            patch["notification_policy"] = clean_policy
     return {key: value for key, value in patch.items() if key in _ALLOWED_PATCH_FIELDS}
 
 
@@ -210,6 +216,8 @@ class ModelTaskIntentExtractor:
             "intent 只能是 create/update/confirm/cancel/list/none。"
             "patch 只允许 target、source_scope、trigger_condition、frequency_seconds、"
             "notification_policy。时间间隔转换为秒；固定钟点或星期计划放到 clarification。"
+            "notification_policy 可包含 report_on_no_change；"
+            "用户要求定期汇报或无变化也通知时设为 true。"
             "target 只保留被关注对象，删除‘创建任务’、执行频率、汇报和通知等命令套话。"
             "用户纠正时只输出被明确修改的字段；‘不是X，是Y’必须采用Y。"
             "输出格式为 {\"intent\":\"create\",\"patch\":{},"

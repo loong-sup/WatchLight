@@ -37,10 +37,15 @@ class RuntimeChannelAdapter:
         )
         if identity is None:
             raise LookupError(f"no bound {self.channel_key} identity")
+        channel_data = (
+            {"receive_id_type": "open_id"}
+            if self.channel_key == "feishu"
+            else None
+        )
         await self.plugin.send(
             "default",
             str(identity["channel_user_id"]),
-            OutboundMessage(text=text),
+            OutboundMessage(text=text, channelData=channel_data),
         )
 
 

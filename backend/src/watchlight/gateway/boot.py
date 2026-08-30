@@ -28,6 +28,7 @@ from watchlight.channels.feishu.plugin import FeishuChannelPlugin
 from watchlight.channels.registry import ChannelRegistry
 from watchlight.channels.routing import resolve_session_key
 from watchlight.channels.webchat.plugin import WebChatPlugin
+from watchlight.channels.wecom.plugin import WeComChannelPlugin
 from watchlight.contracts.agent.runtime import AgentEventType, AgentRunRequest
 from watchlight.contracts.channel.plugin import InboundMessage, OutboundMessage
 from watchlight.contracts.config.types_watchlight import WatchlightConfig
@@ -345,6 +346,9 @@ class GatewayRuntime:
         # 飞书插件收到消息后不会自己跑模型，而是通过 on_inbound 回调交给 GatewayRuntime。
         feishu = FeishuChannelPlugin(on_inbound=self._handle_inbound)
         self.channel_registry.register(feishu)
+        # 企业微信智能机器人通过 HTTP 加密回调入站；具体路由由 gateway/app.py 暴露。
+        wecom = WeComChannelPlugin(on_inbound=self._handle_inbound)
+        self.channel_registry.register(wecom)
 
     # ── 共享 Agent 执行逻辑 ───────────────────────────────────────
 
@@ -917,6 +921,54 @@ class GatewayRuntime:
         if not callable(handle_event):
             return False
         return bool(await handle_event(account_id, event_data))
+
+    def verify_wecom_callback(
+        self,
+        account_id: str,
+        *,
+        signature: str,
+        timestamp: str,
+        nonce: str,
+        echo_str: str,
+    ) -> str:
+        """校验企业微信智能机器人 URL，并返回 echostr 解密后的明文。"""
+        channel_plugin = self.channel_registry.get("wecom")
+        verify_url = getattr(channel_plugin, "verify_url", None)
+        if not callable(verify_url):
+            raise RuntimeError("WeCom channel is unavailable")
+        return str(
+            verify_url(
+                account_id,
+                signature=signature,
+                timestamp=timestamp,
+                nonce=nonce,
+                echo_str=echo_str,
+            )
+        )
+
+    async def handle_wecom_callback(
+        self,
+        account_id: str,
+        *,
+        signature: str,
+        timestamp: str,
+        nonce: str,
+        body: bytes,
+    ) -> bool:
+        """解密企业微信回调并调度入站处理；不会等待完整模型回复。"""
+        channel_plugin = self.channel_registry.get("wecom")
+        handle_callback = getattr(channel_plugin, "handle_encrypted_callback", None)
+        if not callable(handle_callback):
+            raise RuntimeError("WeCom channel is unavailable")
+        return bool(
+            await handle_callback(
+                account_id,
+                signature=signature,
+                timestamp=timestamp,
+                nonce=nonce,
+                body=body,
+            )
+        )
 
     # ── 通道生命周期 ─────────────────────────────────────────────
 

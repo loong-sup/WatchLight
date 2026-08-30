@@ -31,7 +31,11 @@ def test_deterministic_intent_extracts_concise_target_and_five_hour_interval() -
         "source_scope": {"urls": [], "keywords": ["小米公司的澎程汽车"]},
         "trigger_condition": {"must_contain": [], "must_not_contain": []},
         "frequency_seconds": 18000,
-        "notification_policy": {"channels": ["feishu"], "immediate": True},
+        "notification_policy": {
+            "channels": ["feishu"],
+            "immediate": True,
+            "report_on_no_change": True,
+        },
     }
 
 

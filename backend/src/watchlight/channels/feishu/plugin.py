@@ -209,10 +209,12 @@ class FeishuChannelPlugin:
         client = self._clients.get(account_id) or self._clients.get("default")
         if not client:
             log.error("feishu_client_not_initialized")
-            return
+            raise RuntimeError("Feishu client is not initialized")
         text = format_outbound(message)
         if not text:
             return
+        channel_data = message.channel_data or {}
+        receive_id_type = str(channel_data.get("receive_id_type") or "chat_id")
 
         # 有原消息 id 时优先回复原消息；没有时退化为向会话直接发送文本。
         if message.reply_to_id:
@@ -222,10 +224,19 @@ class FeishuChannelPlugin:
                     message.reply_to_id, markdown_to_plain_text(text)
                 )
         else:
-            result = await client.send_markdown(conversation_id, text)
+            result = await client.send_markdown(
+                conversation_id, text, receive_id_type=receive_id_type
+            )
             if result.get("code") != 0:
                 result = await client.send_text(
-                    conversation_id, markdown_to_plain_text(text)
+                    conversation_id,
+                    markdown_to_plain_text(text),
+                    receive_id_type=receive_id_type,
                 )
         if result.get("code") != 0:
-            raise RuntimeError(f"Feishu send failed: {result.get('code')} {result.get('msg')}")
+            error = result.get("error")
+            log_id = error.get("log_id") if isinstance(error, dict) else None
+            suffix = f" log_id={log_id}" if log_id else ""
+            raise RuntimeError(
+                f"Feishu send failed: {result.get('code')} {result.get('msg')}{suffix}"
+            )

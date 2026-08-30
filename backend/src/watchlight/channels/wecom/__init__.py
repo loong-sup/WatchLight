@@ -2,3 +2,7 @@
 # 主要职责：声明包边界和公共导出位置。
 # 阅读提示：统一外部消息入口和回复出口。
 # 运行影响：仅用于源码阅读，不改变运行逻辑。
+
+from watchlight.channels.wecom.plugin import WeComChannelPlugin
+
+__all__ = ["WeComChannelPlugin"]
