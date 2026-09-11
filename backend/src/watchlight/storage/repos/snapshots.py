@@ -63,18 +63,21 @@ class SnapshotsRepo(Repo):
             (execution_id,),
         )
 
-    def latest_for_url(self, source_url: str) -> dict[str, Any] | None:
+    def latest_for_url(
+        self, source_url: str, normalizer_version: int
+    ) -> dict[str, Any] | None:
         return self.one(
-            "SELECT * FROM snapshots WHERE source_url=? AND user_id=? "
-            "ORDER BY captured_at DESC LIMIT 1",
-            (source_url,),
+            "SELECT * FROM snapshots WHERE source_url=? AND normalizer_version=? "
+            "AND user_id=? ORDER BY captured_at DESC LIMIT 1",
+            (source_url, normalizer_version),
         )
 
     def insert_snapshot(self, values: dict[str, Any]) -> dict[str, Any]:
         snapshot_id = str(values.get("snapshot_id") or new_id())
         self.store.execute(
             "INSERT INTO snapshots(snapshot_id,user_id,execution_id,source_url,captured_at,"
-            "content_hash,raw_ref,normalized_ref,previous_snapshot_id) VALUES (?,?,?,?,?,?,?,?,?)",
+            "content_hash,raw_ref,normalized_ref,previous_snapshot_id,normalizer_version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 snapshot_id,
                 self.user_id,
@@ -85,6 +88,7 @@ class SnapshotsRepo(Repo):
                 values["raw_ref"],
                 values["normalized_ref"],
                 values.get("previous_snapshot_id"),
+                int(values.get("normalizer_version", 1)),
             ),
         )
         result = self.one(

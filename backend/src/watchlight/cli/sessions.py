@@ -5,6 +5,8 @@
 
 """CLI sessions commands."""
 
+import time
+
 import typer
 
 from watchlight.core.paths import resolve_state_dir
@@ -43,13 +45,49 @@ def preview(session_key: str = typer.Argument(...)) -> None:
 
 @sessions_app.command("delete")
 def delete(session_key: str = typer.Argument(...)) -> None:
+    from watchlight.sessions.compaction import CompactionStore
+    from watchlight.sessions.transcript import TranscriptManager
+
     store = SessionStore(resolve_state_dir())
     store.load()
-    if store.delete(session_key):
+    entry = store.get(session_key)
+    if entry and entry.status == "running":
+        typer.echo(f"Cannot delete running session: {session_key}")
+        raise typer.Exit(1)
+    if entry and store.delete(session_key):
+        TranscriptManager(resolve_state_dir()).clear(entry.session_id)
+        CompactionStore(resolve_state_dir()).clear(entry.session_id)
         store.save()
         typer.echo(f"Deleted: {session_key}")
     else:
         typer.echo(f"Not found: {session_key}")
+
+
+@sessions_app.command("archive")
+def archive(session_key: str = typer.Argument(...)) -> None:
+    store = SessionStore(resolve_state_dir())
+    store.load()
+    entry = store.get(session_key)
+    if not entry:
+        typer.echo(f"Not found: {session_key}")
+        raise typer.Exit(1)
+    if entry.status == "running":
+        typer.echo(f"Cannot archive running session: {session_key}")
+        raise typer.Exit(1)
+    store.update(session_key, {"archivedAt": int(time.time() * 1000)})
+    store.save()
+    typer.echo(f"Archived: {session_key}")
+
+
+@sessions_app.command("unarchive")
+def unarchive(session_key: str = typer.Argument(...)) -> None:
+    store = SessionStore(resolve_state_dir())
+    store.load()
+    if not store.update(session_key, {"archivedAt": None}):
+        typer.echo(f"Not found: {session_key}")
+        raise typer.Exit(1)
+    store.save()
+    typer.echo(f"Restored: {session_key}")
 
 
 @sessions_app.command("compact")

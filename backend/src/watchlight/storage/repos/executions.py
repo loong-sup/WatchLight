@@ -72,6 +72,19 @@ class ExecutionsRepo(Repo):
             (now, execution_id, self.user_id),
         )
 
+    def update_counts(self, execution_id: str, **counts: int) -> None:
+        allowed = {"source_count", "change_count", "signal_count", "delivery_count"}
+        fields = [name for name in counts if name in allowed]
+        if not fields:
+            return
+        sql = ",".join(f"{name}=?" for name in fields)
+        cursor = self.store.execute(
+            f"UPDATE executions SET {sql} WHERE execution_id=? AND user_id=?",
+            (*(int(counts[name]) for name in fields), execution_id, self.user_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(execution_id)
+
     def settle(
         self,
         execution_id: str,

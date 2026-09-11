@@ -17,6 +17,7 @@ Watchlight 是一个本地运行的个人情报追踪与决策助理。用户可
 - 身份隔离：渠道身份绑定到统一用户，任务、执行记录和查询按用户隔离。
 - Web 工作台：查看会话、模型输出、工具调用、消息上下文和七层运行链路。
 - 飞书接入：私聊、群聊 `@机器人`、长连接收取消息，以及飞书云文档读写。
+- 企业微信接入：智能机器人 API 模式、内部群 `@机器人`、单聊和异步 Markdown 回复。
 - 模型供应商：DashScope、OpenAI、Anthropic 和 DeepSeek，按环境变量中的可用密钥自动注册。
 - 内置工具：网络搜索与网页读取、文件与 Shell 操作、会话协作、记忆搜索、飞书文档等；工具权限按运行场景限制。
 - 可观测性：健康检查、诊断、结构化事件、指标，以及任务到通知的 trace 查询。
@@ -24,7 +25,7 @@ Watchlight 是一个本地运行的个人情报追踪与决策助理。用户可
 ## 系统结构
 
 ```text
-Web / 飞书
+Web / 飞书 / 企业微信
     │
     ▼
 Gateway 与身份层
@@ -95,7 +96,7 @@ DEEPSEEK_API_KEY=
 按需配置联网搜索与飞书：
 
 ```dotenv
-BOCHA_API_KEY=
+TAVILY_API_KEY=
 
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
@@ -200,6 +201,12 @@ watchlight gateway run --config examples/watchlight.feishu.example.json --host 1
 
 飞书开放平台需要创建企业自建应用、开启机器人能力、配置消息与文档权限、订阅 `im.message.receive_v1`，并发布应用版本。完整步骤及排查方法见 [feishurunbook.md](feishurunbook.md)。
 
+## 企业微信配置
+
+企业微信使用“智能机器人 API 模式”和公网 HTTPS 加密回调，默认回调地址为
+`/api/channels/wecom/events`。示例配置、后台操作和能力限制见
+[企业微信接入指南](docs/wecom.md)。
+
 云文档写入默认关闭；确认应用权限与目标租户无误后，再设置：
 
 ```dotenv
@@ -224,8 +231,9 @@ WATCHLIGHT_FEISHU_DOCS_WRITE_ENABLED=true
 | `OPENAI_API_KEY` | OpenAI 模型 | 空 |
 | `ANTHROPIC_API_KEY` | Anthropic 模型 | 空 |
 | `DEEPSEEK_API_KEY` | DeepSeek 模型 | 空 |
-| `BOCHA_API_KEY` | Bocha 网络搜索 | 空 |
+| `TAVILY_API_KEY` | Tavily 网络搜索 | 空 |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭证 | 空 |
+| `WECOM_TOKEN` / `WECOM_ENCODING_AES_KEY` | 企业微信智能机器人回调凭证 | 空 |
 
 关注任务子系统的默认配置：
 
@@ -256,6 +264,13 @@ python -m mypy backend/src/watchlight
 
 # 前端生产构建
 pnpm --dir frontend build
+```
+
+真实网页快照的采集、标注、离线回放和业务指标说明见
+[真实数据评测指南](docs/evaluation.md)。可先运行仓库内置的冻结数据基线：
+
+```bash
+python -m watchlight.evals evals/datasets/httpx_release_seed.jsonl
 ```
 
 项目规格、实施计划和验收记录位于 [`docs/`](docs/)。
@@ -342,6 +357,6 @@ pnpm --dir frontend build
 ## 当前限制
 
 - 项目尚未发布稳定版，配置和 API 仍可能调整。
-- 首期完整接入渠道是 Web 与飞书；仓库中的其他渠道适配模块不代表已在当前 Gateway 启动流程中启用。
+- 当前完整接入渠道是 Web、飞书与企业微信智能机器人；其他渠道适配模块不代表已在 Gateway 启动流程中启用。
 - 信息采集面向公开可访问页面；登录页、验证码、访问拒绝和明确禁止抓取的页面会被阻断，不应绕过站点限制。
 - 生成的变化判断和决策建议应结合原始来源复核，不应直接用于高风险或不可逆操作。

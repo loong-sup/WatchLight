@@ -66,6 +66,7 @@ class SessionEntry(BaseModel):
     # Display
     label: str | None = None
     display_name: str | None = Field(default=None, alias="displayName")
+    archived_at: int | None = Field(default=None, alias="archivedAt")
 
     # Queue
     queue_mode: str | None = Field(default=None, alias="queueMode")

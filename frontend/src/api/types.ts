@@ -3,11 +3,14 @@ export interface SessionEntry {
   sessionId?: string
   updatedAt: number
   channel?: string
+  lastChannel?: string
   status?: string
   model?: string
   label?: string
   inputTokens?: number
   outputTokens?: number
+  totalTokens?: number
+  archivedAt?: number
 }
 
 export interface ChatMessage {
@@ -81,6 +84,11 @@ export interface RunTrace {
   input?: string
   output: string
   replyText?: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  usageScope: 'run' | 'session'
+  archivedAt?: number
   initialMessages: RuntimeMessage[]
   currentMessages: RuntimeMessage[]
   tools: ToolCallTrace[]

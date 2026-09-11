@@ -3,20 +3,20 @@
 # 阅读提示：注册、执行和限制工具调用。
 # 运行影响：仅用于源码阅读，不改变运行逻辑。
 
-"""联网搜索工具：优先使用 Bocha，没有 API Key 时降级到 DuckDuckGo HTML 搜索。"""
+"""联网搜索工具：优先使用 Tavily，没有 API Key 时降级到 DuckDuckGo HTML 搜索。"""
 
 from __future__ import annotations
 
 import os
 import re
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import httpx
 
 from watchlight.tools.types import ToolDefinition
 
-BOCHA_WEB_SEARCH_URL = "https://api.bocha.cn/v1/web-search"
+TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 DEFAULT_RESULT_COUNT = 8
 MAX_RESULT_COUNT = 20
 WEB_SEARCH_PROMPT_INSTRUCTIONS = (
@@ -39,73 +39,102 @@ def _clamp_count(value: Any) -> int:
     return max(1, min(count, MAX_RESULT_COUNT))
 
 
-def _bocha_result(item: dict[str, Any]) -> dict[str, str]:
-    # Bocha 返回字段和内部工具字段不完全一致，这里统一成模型稳定可读的结果结构。
-    title = item.get("name") or item.get("title") or ""
-    snippet = item.get("snippet") or item.get("summary") or ""
+def _tavily_result(item: dict[str, Any]) -> dict[str, str]:
+    """Normalize Tavily's result shape to Watchlight's stable search schema."""
+    url = str(item.get("url") or "")
+    content = str(item.get("content") or "")
     return {
-        "title": str(title),
-        "url": str(item.get("url") or ""),
-        "snippet": str(snippet),
-        "summary": str(item.get("summary") or ""),
-        "site_name": str(item.get("siteName") or item.get("site_name") or ""),
-        "date_published": str(item.get("datePublished") or item.get("date_published") or ""),
+        "title": str(item.get("title") or ""),
+        "url": url,
+        "snippet": content,
+        "summary": content,
+        "site_name": urlparse(url).hostname or "",
+        "date_published": str(item.get("published_date") or ""),
     }
 
 
-async def _bocha_search(params: dict[str, Any], api_key: str) -> dict[str, Any]:
+async def _tavily_search(params: dict[str, Any], api_key: str) -> dict[str, Any]:
     query = str(params.get("query") or "").strip()
     if not query:
         raise ValueError("query is required")
 
     count = _clamp_count(params.get("count", params.get("max_results", DEFAULT_RESULT_COUNT)))
     freshness = str(params.get("freshness") or "noLimit")
-    summary = bool(params.get("summary", True))
+    time_range = {
+        "oneDay": "day",
+        "oneWeek": "week",
+        "oneMonth": "month",
+        "oneYear": "year",
+    }.get(freshness)
     body: dict[str, Any] = {
         "query": query,
-        "freshness": freshness,
-        "summary": summary,
-        "count": count,
+        "max_results": count,
+        "search_depth": str(params.get("search_depth") or "basic"),
+        "topic": str(params.get("topic") or "general"),
+        "include_answer": False,
+        "include_raw_content": False,
     }
+    if time_range:
+        body["time_range"] = time_range
     for key in ("include", "exclude"):
         value = params.get(key)
         if isinstance(value, list) and value:
-            # include/exclude 是可选域名过滤器；空列表不传，减少不同 API 版本兼容问题。
-            body[key] = [str(item) for item in value]
+            body[f"{key}_domains"] = [str(item) for item in value]
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            BOCHA_WEB_SEARCH_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                TAVILY_SEARCH_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+    except httpx.RequestError as exc:
+        return {
+            "query": query,
+            "provider": "tavily",
+            "results": [],
+            "error": f"Tavily search request failed: {type(exc).__name__}",
+        }
     if resp.status_code != 200:
         return {
             "query": query,
-            "provider": "bocha",
+            "provider": "tavily",
             "results": [],
-            "error": f"Bocha search failed: HTTP {resp.status_code}",
+            "error": f"Tavily search failed: HTTP {resp.status_code}",
         }
 
-    payload = resp.json()
-    raw_data = payload.get("data") if isinstance(payload, dict) else {}
-    data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
-    raw_web_pages = data.get("webPages")
-    web_pages: dict[str, Any] = raw_web_pages if isinstance(raw_web_pages, dict) else {}
-    raw_items = web_pages.get("value")
-    items: list[Any] = raw_items if isinstance(raw_items, list) else []
-    # 搜索结果里偶发异常 item 时直接跳过，避免一个坏条目导致整次搜索失败。
-    results = [_bocha_result(item) for item in items if isinstance(item, dict)]
+    try:
+        payload = resp.json()
+    except ValueError:
+        return {
+            "query": query,
+            "provider": "tavily",
+            "results": [],
+            "error": "Tavily search returned invalid JSON",
+        }
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return {
+            "query": query,
+            "provider": "tavily",
+            "results": [],
+            "error": "Tavily search returned an invalid result schema",
+        }
+    results = [
+        _tavily_result(item)
+        for item in payload["results"]
+        if isinstance(item, dict) and item.get("url")
+    ]
 
     return {
         "query": query,
-        "provider": "bocha",
+        "provider": "tavily",
         "freshness": freshness,
-        "summary": summary,
         "results": results[:count],
+        "response_time": payload.get("response_time"),
+        "request_id": payload.get("request_id"),
     }
 
 
@@ -145,9 +174,20 @@ async def _duckduckgo_search(params: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _handler(params: dict[str, Any], context: Any = None) -> dict[str, Any]:
-    api_key = os.environ.get("BOCHA_API_KEY", "").strip()
+    # TAVILY_API_KEY is canonical. Keep the mixed-case spelling compatible with
+    # existing local Windows .env files and case-sensitive deployment hosts.
+    api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+    if not api_key:
+        api_key = next(
+            (
+                value.strip()
+                for key, value in os.environ.items()
+                if key.casefold() == "tavily_api_key" and value.strip()
+            ),
+            "",
+        )
     if api_key:
-        return await _bocha_search(params, api_key)
+        return await _tavily_search(params, api_key)
     return await _duckduckgo_search(params)
 
 
@@ -155,8 +195,8 @@ def create_web_search_tool() -> ToolDefinition:
     return ToolDefinition(
         name="web_search",
         description=(
-            "Search the web for current, factual, or deep-research information. Uses Bocha "
-            "Web Search API when BOCHA_API_KEY is configured, otherwise falls back to DuckDuckGo. "
+            "Search the web for current, factual, or deep-research information. Uses Tavily "
+            "Search API when TAVILY_API_KEY is configured, otherwise falls back to DuckDuckGo. "
             "Use returned result fields directly as evidence; do not fabricate citations."
         ),
         input_schema={
@@ -179,6 +219,16 @@ def create_web_search_tool() -> ToolDefinition:
                     "default": "noLimit",
                 },
                 "summary": {"type": "boolean", "default": True},
+                "topic": {
+                    "type": "string",
+                    "enum": ["general", "news", "finance"],
+                    "default": "general",
+                },
+                "search_depth": {
+                    "type": "string",
+                    "enum": ["basic", "advanced", "fast", "ultra-fast"],
+                    "default": "basic",
+                },
                 "include": {
                     "type": "array",
                     "items": {"type": "string"},

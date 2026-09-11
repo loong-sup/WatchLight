@@ -57,6 +57,8 @@ def perform_handshake(
         "sessions.reset",
         "sessions.delete",
         "sessions.compact",
+        "sessions.preview",
+        "sessions.archive",
         "agent",
         "agent.wait",
         "agent.identity.get",

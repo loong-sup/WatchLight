@@ -68,6 +68,7 @@ class DashScopeProvider:
             "model": model,
             "messages": normalize_messages_for_openai_compatible(messages, system),
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         tools = kwargs.get("tools")
         if tools:
@@ -97,6 +98,15 @@ class DashScopeProvider:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
+
+                # Usage-only final chunks have an empty choices list.
+                usage = chunk.get("usage")
+                if usage:
+                    yield {
+                        "type": "usage",
+                        "input_tokens": usage.get("prompt_tokens", 0),
+                        "output_tokens": usage.get("completion_tokens", 0),
+                    }
 
                 choices = chunk.get("choices", [])
                 if not choices:
@@ -138,12 +148,3 @@ class DashScopeProvider:
                             "params": params,
                         }
                     tool_call_buffers.clear()
-
-                # Usage in final chunk
-                usage = chunk.get("usage")
-                if usage:
-                    yield {
-                        "type": "usage",
-                        "input_tokens": usage.get("prompt_tokens", 0),
-                        "output_tokens": usage.get("completion_tokens", 0),
-                    }

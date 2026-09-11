@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from watchlight.analyzer.brief import BriefBuilder
 from watchlight.analyzer.change import ChangeDetector
 from watchlight.analyzer.dedupe import CandidateSignal, CrossSourceDeduper, DedupWindow
+from watchlight.analyzer.quality import classify_content_quality
 from watchlight.analyzer.value import PreferenceFilter
 from watchlight.storage.blobs import BlobStore
 from watchlight.storage.repos.briefs import BriefsRepo
@@ -87,11 +88,18 @@ class Analyzer:
         sendable_count = 0
         for candidate in merged:
             verdict = self.filter.apply(task_version, preferences, candidate.evidence)
+            quality = classify_content_quality(candidate.evidence)
             dedup_key = self.window.key(str(task["task_id"]), candidate.evidence)
             duplicate = signals_repo.find_recent(
                 str(task["task_id"]), dedup_key, utc_now() - self.window.seconds
             )
-            status = "deduped" if duplicate else "proposed" if verdict.keep else "suppressed"
+            status = (
+                "suppressed"
+                if not quality.safe or not verdict.keep
+                else "deduped"
+                if duplicate
+                else "proposed"
+            )
             signal = signals_repo.insert(
                 {
                     "execution_id": execution_id,
@@ -117,6 +125,9 @@ class Analyzer:
             )
             if status != "proposed":
                 brief_data["sendable"] = False
+            if not quality.safe:
+                brief_data["facts"] = []
+                brief_data["failure_summary"] = f"content_quality:{quality.reason}"
             BriefsRepo.for_user(self.store, user_id).insert(
                 {"execution_id": execution_id, "signal_ids": [signal["signal_id"]], **brief_data}
             )

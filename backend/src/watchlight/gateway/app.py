@@ -12,8 +12,10 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi.responses import PlainTextResponse
 
+from watchlight.channels.wecom.crypto import WeComCryptoError, WeComSignatureError
 from watchlight.contracts.config.types_watchlight import WatchlightConfig
 from watchlight.core.logging import get_logger
 from watchlight.gateway.boot import GatewayRuntime
@@ -32,6 +34,7 @@ from watchlight.gateway.methods.models import handle_models_list
 from watchlight.gateway.methods.registry import MethodRegistry
 from watchlight.gateway.methods.sessions import (
     handle_sessions_abort,
+    handle_sessions_archive,
     handle_sessions_compact,
     handle_sessions_create,
     handle_sessions_delete,
@@ -66,6 +69,7 @@ def create_method_registry() -> MethodRegistry:
     registry.register("sessions.patch", handle_sessions_patch)
     registry.register("sessions.compact", handle_sessions_compact)
     registry.register("sessions.preview", handle_sessions_preview)
+    registry.register("sessions.archive", handle_sessions_archive)
     registry.register("sessions.delete", handle_sessions_delete)
     registry.register("sessions.reset", handle_sessions_reset)
     registry.register("agent", handle_agent)
@@ -194,6 +198,75 @@ def create_app(config: WatchlightConfig | None = None, boot: bool = True) -> Fas
             raise HTTPException(status_code=400, detail="invalid account id")
         handled = await runtime.handle_feishu_sidecar_event(account_id, payload)
         return {"ok": True, "handled": handled}
+
+    def _wecom_runtime() -> GatewayRuntime:
+        runtime = getattr(app.state, "gateway_runtime", None)
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="gateway runtime not started")
+        return runtime
+
+    def _wecom_query(request: Request) -> tuple[str, str, str]:
+        signature = request.query_params.get("msg_signature", "")
+        timestamp = request.query_params.get("timestamp", "")
+        nonce = request.query_params.get("nonce", "")
+        if not signature or not timestamp or not nonce:
+            raise HTTPException(status_code=400, detail="missing WeCom callback parameters")
+        return signature, timestamp, nonce
+
+    async def _verify_wecom(request: Request, account_id: str) -> PlainTextResponse:
+        signature, timestamp, nonce = _wecom_query(request)
+        echo_str = request.query_params.get("echostr", "")
+        if not echo_str:
+            raise HTTPException(status_code=400, detail="missing echostr")
+        try:
+            plain = _wecom_runtime().verify_wecom_callback(
+                account_id,
+                signature=signature,
+                timestamp=timestamp,
+                nonce=nonce,
+                echo_str=echo_str,
+            )
+        except WeComSignatureError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except WeComCryptoError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return PlainTextResponse(plain)
+
+    async def _receive_wecom(request: Request, account_id: str) -> Response:
+        signature, timestamp, nonce = _wecom_query(request)
+        body = await request.body()
+        if len(body) > 1024 * 1024:
+            raise HTTPException(status_code=413, detail="WeCom callback body is too large")
+        try:
+            await _wecom_runtime().handle_wecom_callback(
+                account_id,
+                signature=signature,
+                timestamp=timestamp,
+                nonce=nonce,
+                body=body,
+            )
+        except WeComSignatureError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except WeComCryptoError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # AI 运行在插件创建的后台任务中；先快速返回空包，避免企业微信超时重试。
+        return Response(status_code=200)
+
+    @app.get("/api/channels/wecom/events")
+    async def verify_wecom_default(request: Request) -> PlainTextResponse:
+        return await _verify_wecom(request, "default")
+
+    @app.post("/api/channels/wecom/events")
+    async def receive_wecom_default(request: Request) -> Response:
+        return await _receive_wecom(request, "default")
+
+    @app.get("/api/channels/wecom/{account_id}/events")
+    async def verify_wecom_account(request: Request, account_id: str) -> PlainTextResponse:
+        return await _verify_wecom(request, account_id)
+
+    @app.post("/api/channels/wecom/{account_id}/events")
+    async def receive_wecom_account(request: Request, account_id: str) -> Response:
+        return await _receive_wecom(request, account_id)
 
     @app.get("/api/schema")
     async def get_schema() -> dict[str, object]:

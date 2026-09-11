@@ -34,8 +34,31 @@ class FeishuClient:
     def __init__(self, auth: FeishuAuth) -> None:
         self.auth = auth
 
-    async def send_text(self, chat_id: str, text: str, msg_type: str = "chat_id") -> dict[str, Any]:
-        """Send a plain text message to a chat."""
+    @staticmethod
+    def _response_json(response: httpx.Response, action: str) -> dict[str, Any]:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"Feishu {action} failed: HTTP {response.status_code}"
+            ) from exc
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Feishu {action} returned invalid JSON: HTTP {response.status_code}"
+            ) from exc
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Feishu {action} returned an invalid response schema")
+        return result
+
+    async def send_text(
+        self,
+        receive_id: str,
+        text: str,
+        receive_id_type: str = "chat_id",
+    ) -> dict[str, Any]:
+        """Send a plain text message to a chat or user."""
         token = await self.auth.get_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -45,19 +68,19 @@ class FeishuClient:
         import json
 
         body = {
-            "receive_id": chat_id,
+            "receive_id": receive_id,
             "msg_type": "text",
             "content": json.dumps({"text": text}),
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 FEISHU_MESSAGE_URL,
                 headers=headers,
                 json=body,
-                params={"receive_id_type": msg_type},
+                params={"receive_id_type": receive_id_type},
             )
-            data: dict[str, Any] = resp.json()
+        data = self._response_json(resp, "send")
 
         if data.get("code") != 0:
             log.error("feishu_send_failed", code=data.get("code"), msg=data.get("msg"))
@@ -79,16 +102,19 @@ class FeishuClient:
         }
 
         url = f"{FEISHU_MESSAGE_URL}/{message_id}/reply"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, headers=headers, json=body)
-            result: dict[str, Any] = resp.json()
+        result = self._response_json(resp, "reply")
 
         if result.get("code") != 0:
             log.error("feishu_reply_failed", code=result.get("code"), msg=result.get("msg"))
         return result
 
     async def send_markdown(
-        self, chat_id: str, text: str, msg_type: str = "chat_id"
+        self,
+        receive_id: str,
+        text: str,
+        receive_id_type: str = "chat_id",
     ) -> dict[str, Any]:
         """Send Markdown in a Feishu interactive card."""
         token = await self.auth.get_token()
@@ -99,18 +125,18 @@ class FeishuClient:
         import json
 
         body = {
-            "receive_id": chat_id,
+            "receive_id": receive_id,
             "msg_type": "interactive",
             "content": json.dumps(build_markdown_card(text), ensure_ascii=False),
         }
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 FEISHU_MESSAGE_URL,
                 headers=headers,
                 json=body,
-                params={"receive_id_type": msg_type},
+                params={"receive_id_type": receive_id_type},
             )
-            result: dict[str, Any] = response.json()
+        result = self._response_json(response, "send")
         return result
 
     async def reply_markdown(self, message_id: str, text: str) -> dict[str, Any]:
@@ -127,7 +153,7 @@ class FeishuClient:
             "content": json.dumps(build_markdown_card(text), ensure_ascii=False),
         }
         url = f"{FEISHU_MESSAGE_URL}/{message_id}/reply"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(url, headers=headers, json=body)
-            result: dict[str, Any] = response.json()
+        result = self._response_json(response, "reply")
         return result

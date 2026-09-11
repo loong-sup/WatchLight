@@ -20,6 +20,8 @@ dependencies = [
     "aiofiles>=24",
     "watchfiles>=0.24",
     "rich>=13",
+    "cryptography>=43",
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

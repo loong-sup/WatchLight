@@ -14,6 +14,14 @@
         <span><small>Provider</small><strong>{{ runtime.activeRun?.provider || '-' }}</strong></span>
         <span><small>Model</small><strong>{{ runtime.activeRun?.model || '-' }}</strong></span>
       </div>
+      <div class="token-usage">
+        <div>
+          <small>Token · {{ runtime.activeRun?.usageScope === 'session' ? '会话累计' : '本次运行' }}</small>
+          <strong>{{ formatTokens(runtime.activeRun?.totalTokens || 0) }}</strong>
+        </div>
+        <span>输入 {{ formatTokens(runtime.activeRun?.inputTokens || 0) }}</span>
+        <span>输出 {{ formatTokens(runtime.activeRun?.outputTokens || 0) }}</span>
+      </div>
     </div>
 
     <div class="output">
@@ -44,6 +52,10 @@ function statusLabel(status: string) {
     failed: '失败',
   }
   return labels[status] || status
+}
+
+function formatTokens(tokens: number) {
+  return tokens.toLocaleString()
 }
 </script>
 
@@ -104,6 +116,25 @@ h2 {
 .facts small, .facts strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .facts small { margin-bottom: 5px; color: var(--muted); font: 650 8px/1 var(--mono); text-transform: uppercase; }
 .facts strong { color: var(--text); font-size: 10px; }
+.token-usage {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #dce1ff;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: var(--accent-soft);
+  font: 650 9px/1.3 var(--mono);
+}
+.token-usage div { min-width: 0; }
+.token-usage small,
+.token-usage strong { display: block; }
+.token-usage small { margin-bottom: 5px; color: var(--muted); font-size: 8px; }
+.token-usage strong { color: var(--accent-strong); font-size: 16px; }
+.token-usage > span { white-space: nowrap; }
 .output {
   margin: 12px;
   border: 1px solid var(--border);

@@ -52,6 +52,49 @@ function normalizeStatus(status: RuntimeStatus | undefined): RuntimeStatus {
   return status || 'active'
 }
 
+function tokenValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function sessionRuntimeStatus(status: string | undefined): RuntimeStatus {
+  if (status === 'running') return 'active'
+  if (status === 'failed') return 'failed'
+  return 'done'
+}
+
+function messageText(message: RuntimeMessage | undefined): string {
+  return typeof message?.content === 'string' ? message.content : ''
+}
+
+function historicalRun(session: SessionEntry, messages: RuntimeMessage[]): RunTrace {
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user')
+  const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant')
+  const totalTokens = tokenValue(session.totalTokens)
+    || tokenValue(session.inputTokens) + tokenValue(session.outputTokens)
+  return {
+    id: `history:${session.key}`,
+    sessionKey: session.key,
+    channel: session.channel || session.lastChannel || '',
+    title: session.label || messageText(lastUser) || session.key,
+    status: sessionRuntimeStatus(session.status),
+    startedAt: tokenValue(messages[0]?.ts) || session.updatedAt,
+    updatedAt: session.updatedAt,
+    model: session.model,
+    input: messageText(lastUser),
+    output: messageText(lastAssistant),
+    inputTokens: tokenValue(session.inputTokens),
+    outputTokens: tokenValue(session.outputTokens),
+    totalTokens,
+    usageScope: 'session',
+    archivedAt: session.archivedAt,
+    initialMessages: messages,
+    currentMessages: messages,
+    tools: [],
+    events: [],
+    layerStatus: emptyLayerStatus(),
+  }
+}
+
 function parseToolResult(result: unknown): unknown {
   if (typeof result !== 'string') return result
   const trimmed = result.trim()
@@ -81,9 +124,13 @@ export const useRuntimeStore = defineStore('runtime', () => {
   const models = ref<ModelInfo[]>([])
   const draft = ref('')
   const connectedOnce = ref(false)
+  const showArchived = ref(false)
 
   const activeRun = computed(() => runs.value.find((run) => run.id === activeRunId.value))
   const activeEvents = computed(() => activeRun.value?.events || [])
+  const visibleRuns = computed(() => runs.value.filter((run) => (
+    showArchived.value ? Boolean(run.archivedAt) : !run.archivedAt
+  )))
   const activeMessages = computed(() => {
     const run = activeRun.value
     if (!run) return []
@@ -91,23 +138,53 @@ export const useRuntimeStore = defineStore('runtime', () => {
   })
 
   async function connect() {
-    if (connectedOnce.value) return
-    gateway.onStatus((status) => {
-      wsStatus.value = status
-    })
-    gateway.on('runtime.event', handleRuntimeEvent)
-    gateway.on('agent.event', handleAgentEvent)
+    if (!connectedOnce.value) {
+      gateway.onStatus((status) => {
+        wsStatus.value = status
+      })
+      gateway.on('runtime.event', handleRuntimeEvent)
+      gateway.on('agent.event', handleAgentEvent)
+      connectedOnce.value = true
+    }
     await gateway.connect()
-    connectedOnce.value = true
   }
 
   async function loadSnapshot() {
+    // REST 摘要可独立加载；WebSocket 不可用时仍展示会话，只是暂时没有 transcript 内容。
+    await connect().catch(() => undefined)
     const [sessionData, channelData, modelData] = await Promise.allSettled([
       api.getSessions(),
       api.getChannelStatus(),
       api.getModels(),
     ])
-    if (sessionData.status === 'fulfilled') sessions.value = sessionData.value.sessions || []
+    if (sessionData.status === 'fulfilled') {
+      sessions.value = sessionData.value.sessions || []
+      const restored = await Promise.all(
+        sessions.value.map(async (session) => {
+          try {
+            const preview = await gateway.send('sessions.preview', {
+              sessionKey: session.key,
+              limit: 200,
+            })
+            const messages = Array.isArray(preview?.messages)
+              ? (preview.messages as RuntimeMessage[])
+              : []
+            return historicalRun(session, messages)
+          } catch {
+            // 即使单个 transcript 损坏，会话摘要仍然可以出现在列表中。
+            return historicalRun(session, [])
+          }
+        }),
+      )
+      const liveRuns = runs.value.filter((run) => !run.id.startsWith('history:'))
+      const liveSessionKeys = new Set(liveRuns.map((run) => run.sessionKey))
+      runs.value = [...liveRuns, ...restored.filter((run) => !liveSessionKeys.has(run.sessionKey))]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 100)
+      if (!visibleRuns.value.some((run) => run.id === activeRunId.value)) {
+        activeRunId.value = visibleRuns.value[0]?.id || ''
+      }
+    }
     if (channelData.status === 'fulfilled') channels.value = channelData.value.channels || []
     if (modelData.status === 'fulfilled') models.value = modelData.value.models || []
   }
@@ -119,10 +196,18 @@ export const useRuntimeStore = defineStore('runtime', () => {
     sendStatus.value = '发送中'
     draft.value = ''
     try {
-      await gateway.send('sessions.send', {
+      const response = await gateway.send('sessions.send', {
         sessionKey: 'web:local',
         message: text,
       })
+      const completedRun = runs.value.find(
+        (run) => run.sessionKey === 'web:local' && !run.id.startsWith('history:'),
+      )
+      if (completedRun) {
+        completedRun.inputTokens = tokenValue(response?.inputTokens)
+        completedRun.outputTokens = tokenValue(response?.outputTokens)
+        completedRun.totalTokens = completedRun.inputTokens + completedRun.outputTokens
+      }
       sendStatus.value = '已发送'
       await loadSnapshot()
     } catch (error) {
@@ -181,6 +266,12 @@ export const useRuntimeStore = defineStore('runtime', () => {
       upsertModelStreamEvent(run, event)
     }
 
+    if (event.type === 'runtime.usage') {
+      run.inputTokens += tokenValue(event.data?.inputTokens)
+      run.outputTokens += tokenValue(event.data?.outputTokens)
+      run.totalTokens = run.inputTokens + run.outputTokens
+    }
+
     if (event.type === 'runtime.tool.started') {
       const name = String(event.data?.tool || 'tool')
       run.tools.push({
@@ -229,6 +320,11 @@ export const useRuntimeStore = defineStore('runtime', () => {
       run.layerStatus.runtime = event.status
       run.layerStatus.provider = run.layerStatus.provider === 'active' ? 'done' : run.layerStatus.provider
       run.title = run.title || eventSummary(event)
+      if (event.data) {
+        run.inputTokens = tokenValue(event.data.inputTokens)
+        run.outputTokens = tokenValue(event.data.outputTokens)
+        run.totalTokens = run.inputTokens + run.outputTokens
+      }
     }
 
     if (event.type === 'runtime.channel.reply_sent') {
@@ -244,7 +340,13 @@ export const useRuntimeStore = defineStore('runtime', () => {
 
     activeRunId.value = run.id
     // 最新运行保持在最上方，同时限制最多 50 条，避免长时间打开页面后内存膨胀。
-    runs.value = [run, ...runs.value.filter((item) => item.id !== run.id)].slice(0, 50)
+    runs.value = [
+      run,
+      ...runs.value.filter(
+        (item) => item.id !== run.id
+          && !(item.id.startsWith('history:') && item.sessionKey === run.sessionKey),
+      ),
+    ].slice(0, 100)
   }
 
   function upsertModelStreamEvent(run: RunTrace, event: RuntimeEventPayload) {
@@ -281,6 +383,10 @@ export const useRuntimeStore = defineStore('runtime', () => {
       startedAt: event.ts || Date.now(),
       updatedAt: event.ts || Date.now(),
       output: '',
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      usageScope: 'run',
       initialMessages: [],
       currentMessages: [],
       tools: [],
@@ -308,6 +414,24 @@ export const useRuntimeStore = defineStore('runtime', () => {
     activeRunId.value = id
   }
 
+  async function archiveSession(sessionKey: string, archived = true) {
+    await connect()
+    const result = await gateway.send('sessions.archive', { sessionKey, archived })
+    if (!result?.ok) throw new Error(result?.error?.message || '会话归档失败')
+    await loadSnapshot()
+  }
+
+  async function deleteSession(sessionKey: string) {
+    await connect()
+    const result = await gateway.send('sessions.delete', { sessionKey })
+    if (!result?.ok) throw new Error(result?.error?.message || '会话删除失败')
+    runs.value = runs.value.filter((run) => run.sessionKey !== sessionKey)
+    sessions.value = sessions.value.filter((session) => session.key !== sessionKey)
+    if (!runs.value.some((run) => run.id === activeRunId.value)) {
+      activeRunId.value = visibleRuns.value[0]?.id || ''
+    }
+  }
+
   return {
     wsStatus,
     sendStatus,
@@ -316,13 +440,17 @@ export const useRuntimeStore = defineStore('runtime', () => {
     activeRun,
     activeEvents,
     activeMessages,
+    visibleRuns,
     sessions,
     channels,
     models,
     draft,
+    showArchived,
     connect,
     loadSnapshot,
     sendLocalMessage,
     selectRun,
+    archiveSession,
+    deleteSession,
   }
 })

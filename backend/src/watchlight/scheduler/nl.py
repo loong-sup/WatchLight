@@ -233,6 +233,7 @@ def format_task_confirmation(summary: dict[str, Any]) -> str:
             "",
             f"**执行频率**：{frequency}",
             f"**通知渠道**：{'、'.join(channels) or '未指定'}",
+            f"**无变化时通知**：{'是' if notification.get('report_on_no_change') else '否'}",
             "",
             "回复 **“确认”** 后才会启用。",
         ]

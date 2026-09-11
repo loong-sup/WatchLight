@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,10 @@ from watchlight.scheduler.nl import NaturalLanguageTaskFlow
 from watchlight.scheduler.service import TaskService
 from watchlight.storage import Store, migrate, utc_now
 from watchlight.storage.repos.briefs import BriefsRepo
+from watchlight.storage.repos.executions import ExecutionsRepo
+from watchlight.storage.repos.signals import SignalsRepo
+from watchlight.storage.repos.snapshots import SnapshotsRepo
+from watchlight.storage.repos.tasks import TasksRepo
 from watchlight.tools.builtin.watch_tasks import create_watch_tasks_list_tool
 
 if TYPE_CHECKING:
@@ -49,9 +54,95 @@ class ExecutionPipeline:
     async def run(self, execution_id: str, user_id: str) -> None:
         await self.collector.run(execution_id, user_id)
         await self.analyzer.run(execution_id, user_id)
-        for brief in BriefsRepo.for_user(self.store, user_id).list_for_execution(execution_id):
-            if bool(brief["sendable"]):
+        briefs = BriefsRepo.for_user(self.store, user_id).list_for_execution(execution_id)
+        sendable = [brief for brief in briefs if bool(brief["sendable"])]
+        if not sendable and self._report_on_no_change(execution_id, user_id):
+            sendable = [self._create_no_change_brief(execution_id, user_id)]
+
+        delivery_ids: list[str] = []
+        for brief in sendable:
+            delivery_ids.extend(
                 self.notifier.enqueue(user_id, str(brief["brief_id"]))
+            )
+
+        execution = ExecutionsRepo.for_user(self.store, user_id).get(execution_id)
+        if execution is not None:
+            ExecutionsRepo.for_user(self.store, user_id).update_counts(
+                execution_id,
+                signal_count=len(
+                    SignalsRepo.for_user(self.store, user_id).list_for_execution(execution_id)
+                ),
+                delivery_count=len(delivery_ids),
+            )
+
+    def _report_on_no_change(self, execution_id: str, user_id: str) -> bool:
+        execution = ExecutionsRepo.for_user(self.store, user_id).get(execution_id)
+        if execution is None:
+            return False
+        task = TasksRepo.for_user(self.store, user_id).get(str(execution["task_id"]))
+        if task is None:
+            return False
+        policy = json.loads(str(task["notification_policy_json"]))
+        return bool(policy.get("report_on_no_change", False))
+
+    def _create_no_change_brief(self, execution_id: str, user_id: str) -> dict[str, Any]:
+        executions = ExecutionsRepo.for_user(self.store, user_id)
+        execution = executions.get(execution_id)
+        if execution is None:
+            raise KeyError(execution_id)
+        task = TasksRepo.for_user(self.store, user_id).get(str(execution["task_id"]))
+        if task is None:
+            raise KeyError(str(execution["task_id"]))
+
+        hits = SnapshotsRepo.for_user(self.store, user_id).hits_for_execution(execution_id)
+        successful = [hit for hit in hits if hit["status"] in {"ok", "changed", "unchanged"}]
+        failed_count = len(hits) - len(successful)
+        if hits:
+            fact = (
+                f"本轮检查已完成，共检查 {len(hits)} 个来源，"
+                "暂无检测到需要通知的可读内容变化。"
+            )
+        else:
+            fact = (
+                "本轮检查已完成，但没有获取到可检查的来源，"
+                "暂无可报告的可读内容变化。"
+            )
+        if failed_count:
+            fact += f"其中 {failed_count} 个来源暂时无法访问或被站点限制。"
+
+        at = utc_now()
+        source_urls = list(
+            dict.fromkeys(str(hit["source_url"]) for hit in successful)
+        )[:10]
+        signal = SignalsRepo.for_user(self.store, user_id).insert(
+            {
+                "execution_id": execution_id,
+                "task_id": task["task_id"],
+                "change_ids": [],
+                "source_urls": source_urls,
+                "captured_at": at,
+                "relevance": 1,
+                "importance": 0,
+                "novelty": 0,
+                "source_credibility": 0,
+                "uncertainty_level": "medium" if failed_count else "low",
+                "status": "proposed",
+                "dedup_key": f"periodic-report:{execution_id}",
+            }
+        )
+        return BriefsRepo.for_user(self.store, user_id).insert(
+            {
+                "execution_id": execution_id,
+                "signal_ids": [signal["signal_id"]],
+                "facts": [fact],
+                "inferences": [],
+                "next_steps": [],
+                "source_refs": source_urls,
+                "captured_at": at,
+                "uncertainty_level": "medium" if failed_count else "low",
+                "sendable": True,
+            }
+        )
 
 
 @dataclass(slots=True)

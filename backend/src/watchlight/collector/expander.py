@@ -26,6 +26,9 @@ class BuiltinSearchProvider:
         payload = await tool.handler({"query": query, "count": limit})
         if not isinstance(payload, dict):
             return []
+        if payload.get("error"):
+            provider = str(payload.get("provider") or "unknown")
+            raise RuntimeError(f"{provider} web search failed: {payload['error']}")
         results = payload.get("results", [])
         return [
             str(item["url"])

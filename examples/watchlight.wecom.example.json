@@ -1,0 +1,18 @@
+{
+  "logging": {"level": "info"},
+  "gateway": {"port": 18789},
+  "agents": {"defaults": {"model": "qwen3.6-max-preview"}},
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "accounts": {
+        "default": {
+          "token": "${WECOM_TOKEN}",
+          "encodingAESKey": "${WECOM_ENCODING_AES_KEY}",
+          "botName": "${WECOM_BOT_NAME}",
+          "receiveId": ""
+        }
+      }
+    }
+  }
+}

@@ -23,7 +23,7 @@ python -m pip install -e ".[dev]"
 
 ```text
 DASHSCOPE_API_KEY
-BOCHA_API_KEY
+TAVILY_API_KEY
 FEISHU_APP_ID
 FEISHU_APP_SECRET
 FEISHU_VERIFICATION_TOKEN
@@ -246,13 +246,13 @@ WATCHLIGHT_FEISHU_DOCS_WRITE_ENABLED=true
 FEISHU_DOCS_BASE_URL=https://你的企业域名.feishu.cn
 ```
 
-联网搜索使用 Bocha Web Search。需要在 `.env` 配置：
+联网搜索使用 Tavily Search。需要在 `.env` 配置：
 
 ```text
-BOCHA_API_KEY=你的 Bocha API Key
+TAVILY_API_KEY=你的 Tavily API Key
 ```
 
-`web_search` 会优先调用 Bocha；如果没有配置 `BOCHA_API_KEY`，会降级到 DuckDuckGo HTML 搜索。`web_fetch` 用于打开公开网页并提取正文，不需要额外 key。
+`web_search` 会优先调用 Tavily；如果没有配置 `TAVILY_API_KEY`，会降级到 DuckDuckGo HTML 搜索。`web_fetch` 用于打开公开网页并提取正文，不需要额外 key。
 
 如果不配置，飞书创建接口可能只返回 `document_id`。机器人会把发送者加为文档协作者，用户可在飞书云文档里按标题搜索打开。
 
@@ -275,7 +275,7 @@ BOCHA_API_KEY=你的 Bocha API Key
 - 每个发送者独立会话。
 - 会话 transcript 写入本地状态目录。
 - DashScope、OpenAI、Anthropic 按环境变量自动注册。
-- 联网搜索工具：`web_search`，优先使用 Bocha Web Search，适合深度探索、时效信息和事实核验。
+- 联网搜索工具：`web_search`，优先使用 Tavily Search，适合深度探索、时效信息和事实核验。
 - 网页读取工具：`web_fetch`，用于打开公开 URL，提取页面标题、摘要、正文和可选链接，适合在搜索后核验官方资料、论文页、文档页或 GitHub 页面。
 - 飞书消息触发的 agent run 使用 `messaging` 工具策略，默认不允许危险本地工具。
 - 内部签名事件接口：`POST /internal/channels/feishu/events`，用于 sidecar 或本地测试。

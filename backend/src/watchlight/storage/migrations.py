@@ -207,7 +207,14 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_due ON deliveries(status, scheduled_se
 CREATE INDEX IF NOT EXISTS idx_events_exec ON events(user_id, execution_id, created_at);
 """
 
-MIGRATIONS: tuple[tuple[int, str], ...] = ((1, SCHEMA_V1),)
+SCHEMA_V2 = """
+ALTER TABLE snapshots ADD COLUMN normalizer_version INTEGER NOT NULL DEFAULT 1;
+CREATE INDEX IF NOT EXISTS idx_snapshots_url_version
+ON snapshots(user_id, source_url, normalizer_version, captured_at);
+"""
+
+
+MIGRATIONS: tuple[tuple[int, str], ...] = ((1, SCHEMA_V1), (2, SCHEMA_V2))
 
 
 def migrate(store: Store) -> None:
