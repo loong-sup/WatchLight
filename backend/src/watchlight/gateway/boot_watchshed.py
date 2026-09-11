@@ -98,9 +98,15 @@ class ExecutionPipeline:
         successful = [hit for hit in hits if hit["status"] in {"ok", "changed", "unchanged"}]
         failed_count = len(hits) - len(successful)
         if hits:
-            fact = f"本轮检查已完成，共检查 {len(hits)} 个来源，暂无检测到需要通知的新变化。"
+            fact = (
+                f"本轮检查已完成，共检查 {len(hits)} 个来源，"
+                "暂无检测到需要通知的可读内容变化。"
+            )
         else:
-            fact = "本轮检查已完成，但没有获取到可检查的来源，暂无可报告的新变化。"
+            fact = (
+                "本轮检查已完成，但没有获取到可检查的来源，"
+                "暂无可报告的可读内容变化。"
+            )
         if failed_count:
             fact += f"其中 {failed_count} 个来源暂时无法访问或被站点限制。"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +22,13 @@ if TYPE_CHECKING:
     from watchlight.storage import Store
 
 
-def create_sendable_brief(store: Store, user_id: str, *, dnd: dict[str, str] | None = None) -> str:
+def create_sendable_brief(
+    store: Store,
+    user_id: str,
+    *,
+    dnd: dict[str, str] | None = None,
+    facts: list[str] | None = None,
+) -> str:
     policy = {"channels": ["web"], "immediate": True}
     if dnd:
         policy["do_not_disturb"] = dnd
@@ -45,7 +52,7 @@ def create_sendable_brief(store: Store, user_id: str, *, dnd: dict[str, str] | N
         {
             "execution_id": execution["execution_id"],
             "signal_ids": [signal["signal_id"]],
-            "facts": ["Version 2 released"],
+            "facts": facts or ["Version 2 released"],
             "source_refs": ["https://example.com"],
             "captured_at": 10,
             "uncertainty_level": "low",
@@ -78,6 +85,25 @@ async def test_enqueue_deduplicates_and_delivers(store: Store, user_id: str) -> 
     assert await notifier.drain_due(20) == first
     assert len(memory.sent) == 1
     assert DeliveriesRepo.for_user(store, user_id).get(first[0])["status"] == "delivered"  # type: ignore[index]
+
+
+def test_enqueue_rejects_forced_sendable_css_brief(store: Store, user_id: str) -> None:
+    brief_id = create_sendable_brief(
+        store,
+        user_id,
+        facts=[
+            ":root{--wp--color:#000;--wp--space:1rem;--wp--ratio:1;}"
+            ".card{color:#fff;margin:10px;}"
+        ],
+    )
+    notifier = Notifier(store, ChannelAdapters())
+
+    assert notifier.enqueue(user_id, brief_id, now=20) == []
+    assert DeliveriesRepo.for_user(store, user_id).list() == []
+    brief = BriefsRepo.for_user(store, user_id).get(brief_id)
+    assert brief is not None
+    signal_id = str(json.loads(str(brief["signal_ids_json"]))[0])
+    assert SignalsRepo.for_user(store, user_id).get(signal_id)["status"] == "suppressed"  # type: ignore[index]
 
 
 @pytest.mark.asyncio

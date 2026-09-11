@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 
 from watchlight.storage.blobs import BlobStore
@@ -15,12 +16,110 @@ if TYPE_CHECKING:
     from watchlight.storage.store import Store
 
 
-_TAG = re.compile(r"<[^>]+>")
-_SPACE = re.compile(r"\s+")
+_SPACE = re.compile(r"[^\S\r\n]+")
+_HTML_HINT = re.compile(
+    r"<!doctype\s+html|<(?:html|head|body|main|article|section|div|p|h[1-6]|ul|ol|li|"
+    r"table|tr|td|style|script|template|svg|noscript)(?:\s|>|/)",
+    re.IGNORECASE,
+)
+_IGNORED_TAGS = {
+    "style",
+    "script",
+    "noscript",
+    "template",
+    "svg",
+    "canvas",
+    "iframe",
+    "object",
+}
+_BLOCK_TAGS = {
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "br",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "figcaption",
+    "figure",
+    "footer",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "li",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+}
+NORMALIZER_VERSION = 2
+
+
+class _VisibleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        del attrs
+        normalized = tag.lower()
+        if self._ignored_depth:
+            self._ignored_depth += 1
+        elif normalized in _IGNORED_TAGS:
+            self._ignored_depth = 1
+        elif normalized in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        del attrs
+        if not self._ignored_depth and tag.lower() in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._ignored_depth:
+            self._ignored_depth -= 1
+        elif tag.lower() in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth:
+            self.parts.append(data)
+
+
+def _clean_lines(content: str) -> str:
+    lines = (_SPACE.sub(" ", line).strip() for line in content.splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 def normalize_content(content: str) -> str:
-    return _SPACE.sub(" ", _TAG.sub(" ", content)).strip()
+    if not _HTML_HINT.search(content):
+        return _clean_lines(content)
+    parser = _VisibleTextParser()
+    parser.feed(content)
+    parser.close()
+    return _clean_lines("".join(parser.parts))
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +148,7 @@ class SnapshotWriter:
         normalized = normalize_content(raw)
         digest = hashlib.sha256(normalized.encode()).hexdigest()
         repo = SnapshotsRepo.for_user(self.store, user_id)
-        previous = repo.latest_for_url(source_url)
+        previous = repo.latest_for_url(source_url, NORMALIZER_VERSION)
         if previous is not None and previous["content_hash"] == digest:
             return SnapshotWriteResult(
                 "unchanged", None, str(previous["snapshot_id"]), digest
@@ -67,6 +166,7 @@ class SnapshotWriter:
                 "raw_ref": raw_ref,
                 "normalized_ref": normalized_ref,
                 "previous_snapshot_id": previous["snapshot_id"] if previous else None,
+                "normalizer_version": NORMALIZER_VERSION,
             }
         )
         return SnapshotWriteResult(

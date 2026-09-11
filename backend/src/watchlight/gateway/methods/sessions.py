@@ -5,6 +5,7 @@
 
 """Gateway sessions.* method handlers."""
 
+import time
 from typing import Any
 
 from watchlight.gateway.state import GatewayRuntimeState
@@ -263,10 +264,57 @@ async def handle_sessions_delete(
     runtime = _get_runtime(state)
     if runtime is None:
         return {"ok": False, "error": {"code": "UNAVAILABLE", "message": "no runtime"}}
-    ok = runtime.session_store.delete(params.get("sessionKey", ""))
+    session_key = params.get("sessionKey", "")
+    entry = runtime.session_store.get(session_key)
+    if entry is None:
+        return {"ok": False, "error": {"code": "NOT_FOUND", "message": "session not found"}}
+    if entry.status == "running":
+        return {
+            "ok": False,
+            "error": {"code": "SESSION_RUNNING", "message": "running session cannot be deleted"},
+        }
+
+    ok = runtime.session_store.delete(session_key)
     if ok:
+        runtime.transcript_manager.clear(entry.session_id)
+        compaction_store = getattr(runtime, "compaction_store", None)
+        if compaction_store is not None:
+            compaction_store.clear(entry.session_id)
         runtime.session_store.save()
     return {"ok": ok}
+
+
+async def handle_sessions_archive(
+    params: dict[str, Any], client: GatewayWsClient, state: GatewayRuntimeState
+) -> dict[str, Any]:
+    """Archive or restore a session without deleting its transcript."""
+    runtime = _get_runtime(state)
+    if runtime is None:
+        return {"ok": False, "error": {"code": "UNAVAILABLE", "message": "no runtime"}}
+
+    session_key = params.get("sessionKey", "")
+    entry = runtime.session_store.get(session_key)
+    if entry is None:
+        return {"ok": False, "error": {"code": "NOT_FOUND", "message": "session not found"}}
+
+    archived = bool(params.get("archived", True))
+    if archived and entry.status == "running":
+        return {
+            "ok": False,
+            "error": {"code": "SESSION_RUNNING", "message": "running session cannot be archived"},
+        }
+
+    updated = runtime.session_store.update(
+        session_key,
+        {"archivedAt": int(time.time() * 1000) if archived else None},
+    )
+    runtime.session_store.save()
+    return {
+        "ok": updated is not None,
+        "sessionKey": session_key,
+        "archived": archived,
+        "archivedAt": updated.archived_at if updated else None,
+    }
 
 
 async def handle_sessions_reset(

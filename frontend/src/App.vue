@@ -124,7 +124,9 @@ function statusLabel(status: string) {
 
 onMounted(async () => {
   if (window.innerWidth <= 1060) inspectorOpen.value = false
-  await Promise.allSettled([runtime.connect(), runtime.loadSnapshot()])
+  // transcript 预览通过 Gateway WebSocket 读取，必须先完成握手再恢复历史会话。
+  await Promise.allSettled([runtime.connect()])
+  await runtime.loadSnapshot()
 })
 </script>
 

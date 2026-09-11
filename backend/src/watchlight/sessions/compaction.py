@@ -52,3 +52,9 @@ class CompactionStore:
     def count(self, session_id: str) -> int:
         """Number of compactions for a session."""
         return len(self.list_checkpoints(session_id))
+
+    def clear(self, session_id: str) -> None:
+        """Delete all persisted compaction checkpoints for a session."""
+        path = self._path(session_id)
+        if path.exists():
+            path.unlink()

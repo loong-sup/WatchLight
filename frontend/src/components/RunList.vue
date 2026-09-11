@@ -5,12 +5,23 @@
         <p class="eyebrow">LIVE SESSIONS</p>
         <h2>运行会话</h2>
       </div>
-      <button class="refresh-btn" type="button" aria-label="刷新会话快照" @click="runtime.loadSnapshot">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 11a8 8 0 1 0-2.35 5.65"></path>
-          <path d="M20 5v6h-6"></path>
-        </svg>
-      </button>
+      <div class="head-actions">
+        <button
+          :class="['refresh-btn', { active: runtime.showArchived }]"
+          type="button"
+          :aria-label="runtime.showArchived ? '显示未归档会话' : '显示已归档会话'"
+          :title="runtime.showArchived ? '返回最近会话' : '查看归档'"
+          @click="runtime.showArchived = !runtime.showArchived"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4z"></path><path d="M3 4h18v3H3zM9 11h6"></path></svg>
+        </button>
+        <button class="refresh-btn" type="button" aria-label="刷新会话快照" title="刷新" @click="runtime.loadSnapshot">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.35 5.65"></path>
+            <path d="M20 5v6h-6"></path>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div class="meta-grid">
@@ -31,46 +42,74 @@
     </div>
 
     <div class="list-label">
-      <span>最近运行</span>
-      <strong>{{ runtime.runs.length }}</strong>
+      <span>{{ runtime.showArchived ? '已归档会话' : '最近运行' }}</span>
+      <strong>{{ listedRuns.length }}</strong>
     </div>
 
     <div class="runs">
-      <button
-        v-for="run in runtime.runs"
+      <article
+        v-for="run in listedRuns"
         :key="run.id"
-        :class="['run-row', { active: run.id === runtime.activeRunId }]"
-        @click="runtime.selectRun(run.id)"
+        :class="['run-row', { active: run.id === runtime.activeRunId, archived: run.archivedAt }]"
       >
-        <span :class="['run-icon', run.status]">
-          <svg v-if="run.status === 'done'" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8 2.4 2.4L12 5"></path></svg>
-          <svg v-else-if="run.status === 'failed'" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6"></path></svg>
-          <span v-else></span>
-        </span>
-        <span class="run-main">
-          <span class="run-title">{{ run.title || run.sessionKey }}</span>
-          <span class="run-sub">
-            <span>{{ run.channel || 'WebChat' }}</span>
-            <i></i>
-            <span>{{ run.model || '等待模型' }}</span>
+        <button class="run-select" type="button" @click="runtime.selectRun(run.id)">
+          <span :class="['run-icon', run.status]">
+            <svg v-if="run.status === 'done'" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8 2.4 2.4L12 5"></path></svg>
+            <svg v-else-if="run.status === 'failed'" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6"></path></svg>
+            <span v-else></span>
           </span>
-        </span>
-        <span class="run-time">{{ formatTime(run.updatedAt) }}</span>
-      </button>
+          <span class="run-main">
+            <span class="run-title">{{ run.title || run.sessionKey }}</span>
+            <span class="run-sub">
+              <span>{{ run.channel || 'WebChat' }}</span>
+              <i></i>
+              <span>{{ formatTokens(run.totalTokens) }}</span>
+            </span>
+          </span>
+          <span class="run-time">{{ formatTime(run.updatedAt) }}</span>
+        </button>
+        <div class="row-actions">
+          <button
+            type="button"
+            :disabled="run.status === 'active'"
+            :title="run.archivedAt ? '恢复会话' : '归档会话'"
+            :aria-label="run.archivedAt ? '恢复会话' : '归档会话'"
+            @click="toggleArchive(run.sessionKey, !run.archivedAt)"
+          >
+            {{ run.archivedAt ? '恢复' : '归档' }}
+          </button>
+          <button
+            class="danger"
+            type="button"
+            :disabled="run.status === 'active'"
+            title="永久删除会话"
+            aria-label="永久删除会话"
+            @click="removeSession(run.sessionKey)"
+          >删除</button>
+        </div>
+      </article>
     </div>
 
-    <div v-if="!runtime.runs.length" class="empty">
+    <div v-if="!listedRuns.length" class="empty">
       <span class="empty-beam" aria-hidden="true"></span>
-      <strong>等待第一条消息</strong>
-      <p>运行事件到达后，会话会出现在这里。</p>
+      <strong>{{ runtime.showArchived ? '暂无归档会话' : '等待第一条消息' }}</strong>
+      <p>{{ runtime.showArchived ? '归档后的会话会显示在这里。' : '运行事件到达后，会话会出现在这里。' }}</p>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
+import { computed, watch } from 'vue'
 import { useRuntimeStore } from '@/stores/runtime'
 
 const runtime = useRuntimeStore()
+const listedRuns = computed(() => runtime.runs.filter((run) => (
+  runtime.showArchived ? Boolean(run.archivedAt) : !run.archivedAt
+)))
+
+watch(() => runtime.showArchived, () => {
+  runtime.selectRun(listedRuns.value[0]?.id || '')
+})
 
 function connectionLabel(status: string) {
   const labels: Record<string, string> = {
@@ -84,6 +123,27 @@ function connectionLabel(status: string) {
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour12: false })
+}
+
+function formatTokens(tokens: number) {
+  return `${tokens.toLocaleString()} tokens`
+}
+
+async function toggleArchive(sessionKey: string, archived: boolean) {
+  try {
+    await runtime.archiveSession(sessionKey, archived)
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : '会话操作失败')
+  }
+}
+
+async function removeSession(sessionKey: string) {
+  if (!window.confirm('永久删除该会话及全部聊天记录？此操作无法撤销。')) return
+  try {
+    await runtime.deleteSession(sessionKey)
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : '会话删除失败')
+  }
 }
 </script>
 
@@ -112,6 +172,7 @@ function formatTime(ts: number) {
   padding: 18px;
   border-bottom: 1px solid var(--border);
 }
+.head-actions { display: flex; gap: 6px; }
 .eyebrow {
   font: 750 9px/1 var(--mono);
   letter-spacing: 0.08em;
@@ -142,6 +203,7 @@ h2 {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.refresh-btn.active { border-color: #cdd3ff; color: var(--accent); background: var(--accent-soft); }
 .refresh-btn svg {
   width: 16px;
   fill: none;
@@ -227,17 +289,12 @@ h2 {
 }
 .run-row {
   width: 100%;
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 11px 10px;
+  position: relative;
+  display: block;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
-  text-align: left;
   color: var(--text);
-  cursor: pointer;
 }
 .run-row:hover,
 .run-row.active {
@@ -245,6 +302,40 @@ h2 {
   border-color: var(--border);
   box-shadow: var(--shadow-sm);
 }
+.run-row.archived { opacity: 0.82; }
+.run-select {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 10px;
+  border: 0;
+  border-radius: inherit;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.row-actions {
+  display: none;
+  gap: 5px;
+  padding: 0 10px 9px 48px;
+}
+.run-row:hover .row-actions,
+.run-row:focus-within .row-actions { display: flex; }
+.row-actions button {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 9px;
+  cursor: pointer;
+}
+.row-actions button:hover { color: var(--accent); border-color: #cdd3ff; }
+.row-actions button.danger:hover { color: var(--red); border-color: #f4c9d1; background: var(--red-soft); }
+.row-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
 .run-row.active {
   border-color: #d8ddff;
   background: linear-gradient(100deg, var(--accent-soft), #fff 70%);

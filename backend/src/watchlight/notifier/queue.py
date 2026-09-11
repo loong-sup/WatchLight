@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from watchlight.analyzer.quality import classify_content_quality
 from watchlight.notifier.dedup import DedupGate
 from watchlight.notifier.dnd import DoNotDisturbCalculator
 from watchlight.storage.repos.briefs import BriefsRepo
@@ -40,6 +41,13 @@ class Notifier:
             return []
         signal = SignalsRepo.for_user(self.store, user_id).get(str(signal_ids[0]))
         if signal is None:
+            return []
+        facts = json.loads(str(brief["facts_json"]))
+        quality = classify_content_quality("\n".join(str(item) for item in facts))
+        if not quality.safe:
+            SignalsRepo.for_user(self.store, user_id).update_status(
+                str(signal["signal_id"]), "suppressed", at
+            )
             return []
         task = TasksRepo.for_user(self.store, user_id).get(str(signal["task_id"]))
         if task is None:

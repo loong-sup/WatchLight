@@ -140,7 +140,116 @@ async def test_periodic_report_is_queued_when_nothing_changed(
     assert len(deliveries) == 1
     assert await notifier.drain_due(utc_now() + 1) == [deliveries[0]["delivery_id"]]
     assert len(memory.sent) == 1
-    assert "暂无检测到需要通知的新变化" in memory.sent[0][1]
+    assert "暂无检测到需要通知的可读内容变化" in memory.sent[0][1]
+
+
+@pytest.mark.asyncio
+async def test_periodic_report_replaces_suppressed_technical_change(
+    store: Store, user_id: str, tmp_path: Path
+) -> None:
+    fetcher = FixtureFetchClient(
+        ":root{--wp--color:#000;--wp--space:1rem;--wp--ratio:1;}"
+    )
+    blob_root = tmp_path / "blobs"
+    collector = Collector(store, fetcher, blob_root=blob_root, min_host_interval=0)
+    analyzer = Analyzer(store, blob_root=blob_root)
+    adapters = ChannelAdapters()
+    memory = MemoryChannelAdapter()
+    adapters.register("web", memory)
+    notifier = Notifier(store, adapters)
+    scheduler = SchedulerLoop(store, ExecutionPipeline(store, collector, analyzer, notifier))
+    tasks = TaskService(store)
+    created = tasks.create(
+        user_id,
+        {
+            "target": "Watch theme source",
+            "source_scope": {"urls": ["https://fixture.example/theme.txt"]},
+            "trigger_condition": {"must_contain": [], "must_not_contain": []},
+            "frequency_seconds": 3600,
+            "notification_policy": {
+                "channels": ["web"],
+                "immediate": True,
+                "report_on_no_change": True,
+            },
+        },
+    )
+    assert created.task_id and created.normalized_version_id
+    tasks.confirm(user_id, created.task_id, created.normalized_version_id, now=100)
+
+    assert len(await scheduler.tick(3700)) == 1
+    assert len(await notifier.drain_due(utc_now() + 1)) == 1
+    fetcher.content = ":root{--wp--color:#111;--wp--space:2rem;--wp--ratio:2;}"
+    assert len(await scheduler.tick(7300)) == 1
+
+    completed = [
+        row
+        for row in ExecutionsRepo.for_user(store, user_id).list_for_task(created.task_id)
+        if row["status"] != "pending"
+    ]
+    latest = completed[0]
+    assert latest["signal_count"] == 2
+    assert latest["delivery_count"] == 1
+    latest_signals = SignalsRepo.for_user(store, user_id).list_for_execution(
+        str(latest["execution_id"])
+    )
+    assert {signal["status"] for signal in latest_signals} == {"suppressed", "proposed"}
+
+    assert len(await notifier.drain_due(utc_now() + 1)) == 1
+    assert len(memory.sent) == 2
+    assert "可读内容变化" in memory.sent[-1][1]
+    assert "--wp--" not in memory.sent[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_wordpress_css_change_never_reaches_outbound_text(
+    store: Store, user_id: str, tmp_path: Path
+) -> None:
+    fixtures = Path("fixtures/watchlight/sources")
+    fetcher = FixtureFetchClient(
+        (fixtures / "wordpress_css_v1.html").read_text(encoding="utf-8")
+    )
+    blob_root = tmp_path / "blobs"
+    collector = Collector(store, fetcher, blob_root=blob_root, min_host_interval=0)
+    analyzer = Analyzer(store, blob_root=blob_root)
+    adapters = ChannelAdapters()
+    memory = MemoryChannelAdapter()
+    adapters.register("web", memory)
+    notifier = Notifier(store, adapters)
+    scheduler = SchedulerLoop(store, ExecutionPipeline(store, collector, analyzer, notifier))
+    tasks = TaskService(store)
+    created = tasks.create(
+        user_id,
+        {
+            "target": "Watch Xiaomi article",
+            "source_scope": {"urls": ["https://fixture.example/wordpress"]},
+            "trigger_condition": {"must_contain": [], "must_not_contain": []},
+            "frequency_seconds": 3600,
+            "notification_policy": {
+                "channels": ["web"],
+                "immediate": True,
+                "report_on_no_change": True,
+            },
+        },
+    )
+    assert created.task_id and created.normalized_version_id
+    tasks.confirm(user_id, created.task_id, created.normalized_version_id, now=100)
+
+    assert len(await scheduler.tick(3700)) == 1
+    assert len(await notifier.drain_due(utc_now() + 1)) == 1
+    fetcher.content = (fixtures / "wordpress_css_v2.html").read_text(encoding="utf-8")
+    assert len(await scheduler.tick(7300)) == 1
+    assert len(await notifier.drain_due(utc_now() + 1)) == 1
+
+    assert len(memory.sent) == 2
+    assert "--wp--" not in memory.sent[-1][1]
+    assert "linear-gradient" not in memory.sent[-1][1]
+    latest = next(
+        row
+        for row in ExecutionsRepo.for_user(store, user_id).list_for_task(created.task_id)
+        if row["status"] != "pending"
+    )
+    assert latest["signal_count"] == 1
+    assert latest["delivery_count"] == 1
 
 
 def test_unsupported_action_does_not_persist(store: Store, user_id: str) -> None:

@@ -34,6 +34,7 @@ from watchlight.gateway.methods.models import handle_models_list
 from watchlight.gateway.methods.registry import MethodRegistry
 from watchlight.gateway.methods.sessions import (
     handle_sessions_abort,
+    handle_sessions_archive,
     handle_sessions_compact,
     handle_sessions_create,
     handle_sessions_delete,
@@ -68,6 +69,7 @@ def create_method_registry() -> MethodRegistry:
     registry.register("sessions.patch", handle_sessions_patch)
     registry.register("sessions.compact", handle_sessions_compact)
     registry.register("sessions.preview", handle_sessions_preview)
+    registry.register("sessions.archive", handle_sessions_archive)
     registry.register("sessions.delete", handle_sessions_delete)
     registry.register("sessions.reset", handle_sessions_reset)
     registry.register("agent", handle_agent)

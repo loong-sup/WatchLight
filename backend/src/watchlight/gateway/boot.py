@@ -410,6 +410,8 @@ class GatewayRuntime:
 
         # 先把 session 标记为运行中，这样前端和后续诊断能看到当前任务状态。
         run_patch = start_run(session_key, {})
+        # 归档只影响列表可见性；收到新消息时自动恢复该会话。
+        run_patch["archivedAt"] = None
         self.session_store.update(session_key, run_patch)
         self.session_store.save()
         run_start_ms = int(time.time() * 1000)

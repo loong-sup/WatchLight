@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
 from watchlight.storage import Store, migrate
 from watchlight.storage.repos.identity import IdentityRepo
 

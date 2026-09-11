@@ -57,6 +57,7 @@ class OpenAIProvider:
             "model": model,
             "messages": normalize_messages_for_openai_compatible(messages, system),
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         tools = kwargs.get("tools")
         if tools:
@@ -78,6 +79,13 @@ class OpenAIProvider:
                 if not line.startswith("data: ") or line == "data: [DONE]":
                     continue
                 chunk = json.loads(line[6:])
+                usage = chunk.get("usage")
+                if usage:
+                    yield {
+                        "type": "usage",
+                        "input_tokens": usage.get("prompt_tokens", 0),
+                        "output_tokens": usage.get("completion_tokens", 0),
+                    }
                 choices = chunk.get("choices", [])
                 if not choices:
                     continue
@@ -108,10 +116,3 @@ class OpenAIProvider:
                             "params": params,
                         }
                     tc_bufs.clear()
-                usage = chunk.get("usage")
-                if usage:
-                    yield {
-                        "type": "usage",
-                        "input_tokens": usage.get("prompt_tokens", 0),
-                        "output_tokens": usage.get("completion_tokens", 0),
-                    }
